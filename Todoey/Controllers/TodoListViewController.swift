@@ -6,24 +6,31 @@
 //
 
 import UIKit
+import CoreData
 
 class TodoListViewController: UITableViewController {
     
-    let dataFilePath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appending(component: "Items.plist")
     
-    var itemArray = [ItemModel]()
+    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
+    
+    var itemArray = [Item]()
+    
+    var categories : Category? {
+        didSet {
+            loadItems()
+        }
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         
+        //        print(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask))
         settingsNavigationBar()
         settingsTableView()
-       
+        
         loadItems()
-        
-        
+
     }
-    
-    
 }
 
 // MARK: - TableView Datasource Methods
@@ -42,7 +49,7 @@ extension TodoListViewController {
         cell.contentConfiguration = config
         
         cell.accessoryType = item.done ? .checkmark : .none
-       
+        
         
         return cell
     }
@@ -54,7 +61,11 @@ extension TodoListViewController {
     
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         
+        
+        
         itemArray[indexPath.row].done = !itemArray[indexPath.row].done
+        //        context.delete(itemArray[indexPath.row])
+        //        itemArray.remove(at: indexPath.row)
         
         saveItems()
         
@@ -74,13 +85,56 @@ extension TodoListViewController {
     }
 }
 
+// MARK: - Settings UISearchController
+extension TodoListViewController {
+    
+    func createSearchController() -> UISearchController {
+        let searchController = UISearchController(searchResultsController: nil)
+        //        searchController.searchResultsUpdater = self
+        searchController.searchBar.delegate = self
+        searchController.obscuresBackgroundDuringPresentation = false
+        searchController.searchBar.placeholder = "Search"
+        searchController.searchBar.tintColor = .white
+        searchController.searchBar.searchTextField.backgroundColor = .white
+        searchController.searchBar.backgroundColor = #colorLiteral(red: 0.2509803922, green: 0.5568627451, blue: 0.568627451, alpha: 1)
+        
+        return searchController
+    }
+}
+
+// MARK: - SearchBarDelegate
+extension TodoListViewController: UISearchBarDelegate {
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        let request : NSFetchRequest<Item> = Item.fetchRequest()
+        
+        if let text = searchBar.text {
+            request.predicate = NSPredicate(format: "title CONTAINS[cd] %@", text)
+            
+            request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
+            
+            loadItems(with: request)
+        }
+    }
+    
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        if searchBar.text?.count == 0 {
+            self.loadItems()
+            
+            DispatchQueue.main.async {
+                searchBar.resignFirstResponder()
+            }
+            
+        }
+    }
+}
 
 // MARK: - Settings NavigationBar
 extension TodoListViewController {
     
     private func settingsNavigationBar() {
         
-        title = "Todoey"
+        title = "Items"
         
         let appearance = UINavigationBarAppearance()
         appearance.backgroundColor = #colorLiteral(red: 0.2509803922, green: 0.5568627451, blue: 0.568627451, alpha: 1)
@@ -95,7 +149,10 @@ extension TodoListViewController {
         let barButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addNewItems))
         
         
+        definesPresentationContext = true
+        
         navigationItem.rightBarButtonItem = barButtonItem
+        navigationItem.searchController = createSearchController()
     }
     
     @objc private func addNewItems() {
@@ -111,15 +168,22 @@ extension TodoListViewController {
         
         let action = UIAlertAction(title: "Add Item", style: .default) { [weak self] action in
             guard let text = textField.text, text != "" else { return }
-            let item = ItemModel(title: text)
-            self?.itemArray.append(item)
             
-            self?.saveItems()
-                        
-            DispatchQueue.main.async {
-                self?.tableView.reloadData()
+            if let context = self?.context {
+                let item = Item(context: context)
+                item.title = text
+                item.done = false
+                item.parentCategory = self?.categories
+                self?.itemArray.append(item)
+                
+                self?.saveItems()
+                
+                DispatchQueue.main.async {
+                    self?.tableView.reloadData()
+                }
             }
-        
+            
+            
         }
         
         alert.addAction(action)
@@ -127,30 +191,38 @@ extension TodoListViewController {
     }
     
     private func saveItems() {
-        let encoder = PropertyListEncoder()
-        
         do {
-            let data = try encoder.encode(itemArray)
-            if let dataFilePath = dataFilePath {
-                try data.write(to: dataFilePath)
-            }
+            try self.context.save()
         } catch {
             print(error.localizedDescription)
         }
+        
     }
     
-    private func loadItems() {
-        do {
-            if let dataFilePath = dataFilePath {
-                let data = try Data(contentsOf: dataFilePath)
-                let decoder = PropertyListDecoder()
-                let itemArray = try decoder.decode([ItemModel].self, from: data)
-                self.itemArray = itemArray
+    private func loadItems(with request: NSFetchRequest<Item> = Item.fetchRequest(), predictate: NSPredicate? = nil) {
+        
+        if let categories = categories?.name, let predictate = predictate {
+            let predicate = NSPredicate(format: "parentCategory.name MATCHES %@", categories)
+            let compoundPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, predictate])
+            request.predicate = compoundPredicate
+        } else {
+            if let categories = categories?.name {
+                request.predicate = NSPredicate(format: "parentCategory.name MATCHES %@", categories)
+            } else {
+                print("Error")
             }
+        }
+        
+        do {
+            let item = try context.fetch(request)
+            self.itemArray = item
         } catch {
             print(error.localizedDescription)
         }
         
+        DispatchQueue.main.async {
+            self.tableView.reloadData()
+        }
     }
 }
 
