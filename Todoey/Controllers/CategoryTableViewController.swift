@@ -7,14 +7,13 @@
 
 import Foundation
 import UIKit
-import CoreData
+import RealmSwift
 
 class CategoryTableViewController: UITableViewController {
     
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
+    let realm = try! Realm()
     
-    var categories = [Category]()
-    
+    var categories: Results<Category>?
     override func viewDidLoad() {
         super.viewDidLoad()
         
@@ -22,7 +21,7 @@ class CategoryTableViewController: UITableViewController {
         settingsTableView()
         
         loadCategories()
-    
+        
     }
     
 }
@@ -31,21 +30,39 @@ class CategoryTableViewController: UITableViewController {
 extension CategoryTableViewController {
     
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return categories.count
+        return categories?.count ?? 1
     }
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "category", for: indexPath)
         
-        let category = categories[indexPath.row]
-        var config = cell.defaultContentConfiguration()
-        config.text = category.name
-        cell.contentConfiguration = config
-        
-//        cell.accessoryType = item.done ? .checkmark : .none
-        
-        
+        if let categories = categories {
+            let category = categories[indexPath.row]
+            var config = cell.defaultContentConfiguration()
+            config.text = category.name
+            cell.contentConfiguration = config
+            
+            let n1 = numberFormatter(text: category.color[0].hue)
+            let n2 = numberFormatter(text: category.color[0].saturation)
+            let n3 = numberFormatter(text: category.color[0].brightness)
+            
+            cell.backgroundColor = UIColor(hue: n1 , saturation: n2 , brightness: n3 , alpha: 1)
+            //        cell.accessoryType = item.done ? .checkmark : .none
+        }
         return cell
+    }
+    
+    private func numberFormatter(text: String) -> CGFloat {
+        let str = text
+        if let n = NumberFormatter().number(from: str) {
+            let f = CGFloat(truncating: n)
+            return f
+        }
+        return 0
+    }
+    
+    override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        return 100
     }
     
 }
@@ -57,13 +74,37 @@ extension CategoryTableViewController {
         
         
         let controller = TodoListViewController()
-        controller.categories = categories[indexPath.row]
+        controller.categories = categories?[indexPath.row]
         self.navigationController?.pushViewController(controller, animated: true)
-        saveCategories()
+        
         
         tableView.deselectRow(at: indexPath, animated: true)
     }
     
+    override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard let categories = categories else { return UISwipeActionsConfiguration()}
+        
+        let action = UIContextualAction(style: .destructive,
+                                        title: "Delete") { [weak self] (action, view, completionHandler) in
+            do {
+                try self?.realm.write {
+                    self?.realm.delete(categories[indexPath.row])
+                }
+            } catch {
+                print(error.localizedDescription)
+            }
+            tableView.reloadData()
+            
+            completionHandler(true)
+        }
+        action.image = UIImage(systemName: "basket")
+        
+        return UISwipeActionsConfiguration(actions: [action])
+    }
+    
+    //    override func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+    //
+    //    }
     
 }
 
@@ -83,6 +124,7 @@ extension CategoryTableViewController {
         navigationController?.navigationBar.standardAppearance = appearance
         navigationController?.navigationBar.compactAppearance = appearance
         navigationController?.navigationBar.scrollEdgeAppearance = appearance
+        navigationController?.navigationBar.prefersLargeTitles = true
         
         let barButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addNewCategory))
         
@@ -106,45 +148,42 @@ extension CategoryTableViewController {
         let action = UIAlertAction(title: "Add", style: .default) { [weak self] action in
             guard let text = textField.text, text != "" else { return }
             
-            if let context = self?.context {
-                let category = Category(context: context)
-                category.name = text
-                self?.categories.append(category)
-                
-                self?.saveCategories()
-                
-                DispatchQueue.main.async {
-                    self?.tableView.reloadData()
-                }
+            let category = Category()
+            category.name = text
+            let _ = UIColor.generateRandomColor()
+            let colorRealm = Color()
+            colorRealm.hue = UIColor.hue.description
+            colorRealm.saturation = UIColor.saturation.description
+            colorRealm.brightness = UIColor.brightness.description
+            category.color.append(colorRealm)
+            
+            self?.saveCategories(category: category)
+            
+            DispatchQueue.main.async {
+                self?.tableView.reloadData()
             }
-
+            
         }
         
         alert.addAction(action)
         self.present(alert, animated: true)
     }
     
-    private func saveCategories() {
+    private func saveCategories(category: Category) {
         do {
-            try self.context.save()
+            try realm.write({
+                realm.add(category)
+            })
         } catch {
             print(error.localizedDescription)
         }
         
     }
     
-    private func loadCategories(with request: NSFetchRequest<Category> = Category.fetchRequest()) {
+    private func loadCategories() {
+        let categories = realm.objects(Category.self)
+        self.categories = categories
         
-        do {
-            let category = try context.fetch(request)
-            self.categories = category
-        } catch {
-            print(error.localizedDescription)
-        }
-        
-        DispatchQueue.main.async {
-            self.tableView.reloadData()
-        }
     }
 }
 
@@ -153,6 +192,7 @@ extension CategoryTableViewController {
     
     private func settingsTableView() {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "category")
+        tableView.separatorStyle = .none
     }
 }
 
